@@ -2,6 +2,10 @@
 /************************************************************************
 VideoULA.v
 VideoULA V02/V03 - A replacement Video ULA for the BBC Micro
+Build 5 - November 2026 - Mode 7 cursor delay reduced to cursor_invert[0]
+                   (one stage, 62.5ns). Gives a correctly aligned mode 7
+                   cursor on Master and Model B with the CPLD generating the
+                   6MHz.
 Build 4 - November 2026 - Cursor alignment fix. Modes 0-6 cursor now uses
                    cursor_invert0 (no delay); mode 7 cursor uses cursor_invert[1].
 Build 3 - August 2026 - 16MHz build: CLK_6M from CLK_48M phase
@@ -340,13 +344,13 @@ module VideoULA (
     // =========================================================================
     // OUTPUT MUX
     // =========================================================================
-    // Mode 7: cursor_invert[1] is correct on a Master in all clock
-    // configurations, and on a Model B when the CPLD generates the 6MHz.
-    // On a Model B that derives 6MHz from the CPLD 8/4/2MHz outputs the
-    // mode 7 cursor may be one pixel too far right; feed the CPLD CLK_6M
-    // directly to the teletext IC to avoid this.
-    assign R = r0_teletext ? (R_IN ^ cursor_invert[1]) : RR;
-    assign G = r0_teletext ? (G_IN ^ cursor_invert[1]) : GG;
-    assign B = r0_teletext ? (B_IN ^ cursor_invert[1]) : BB;
+    // Mode 7: cursor_invert[0] (62.5ns) gives a correctly aligned cursor on a
+    // Master and a Model B with the CPLD generating the 6MHz, and on a Model B
+    // using the motherboard 6MHz. On a Master using the motherboard 6MHz the
+    // cursor may be marginally (less than half a pixel) to the left. Feeding
+    // the CPLD CLK_6M directly to the teletext IC gives the cleanest picture.
+    assign R = r0_teletext ? (R_IN ^ cursor_invert[0]) : RR;
+    assign G = r0_teletext ? (G_IN ^ cursor_invert[0]) : GG;
+    assign B = r0_teletext ? (B_IN ^ cursor_invert[0]) : BB;
 
 endmodule

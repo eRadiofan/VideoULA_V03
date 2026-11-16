@@ -25,7 +25,7 @@ All three versions share the same 28-pin DIP footprint as the original ULA and a
 
 - **CPLD**: Atmel ATF1504AS-10AU44 (64 macrocells, 5V) — still in production
 - **SRAM**: ISSI IS62C256AL-45TLI (32K×8, 5V, TSOP-28, 45ns) — only locations 0-15 and bits 0-3 used
-- **Oscillator**: 48MHz SMD oscillator (3225 package, 5V) — optional in 16MHz mode
+- **Oscillator**: 48MHz SMD oscillator (3225 package, 5V) — used by the 48MHz mode, not needed in 16MHz mode
 - **Clock buffer**: 74LVC1G17 (SOT-23) — Schmitt trigger buffer on 16MHz CLK_IN
 - **No LDO required** — everything runs at 5V
 
@@ -34,7 +34,7 @@ All three versions share the same 28-pin DIP footprint as the original ULA and a
 - **5V CPLD** — ATF1504AS operates at 5V throughout, no LDO required
 - **Higher output voltage** — 5V logic outputs directly compatible with Master 128 custom ICs requiring higher logic 1 voltage; no output clock buffering needed
 - **Still in production** — ATF1504AS is actively manufactured by Microchip, unlike the obsolete XC9572XL
-- **64 macrocells** — slightly fewer than the XC9572XL's 72, but sufficient for the design (53/64 used in both the 48MHz and 16MHz builds)
+- **64 macrocells** — slightly fewer than the XC9572XL's 72, but sufficient for the design (51/64 used in both the 48MHz and 16MHz builds)
 - **Quartus 13.0 SP1** — uses Altera/Intel Quartus instead of Xilinx ISE
 - **Separate CLK_16M and CLK_48M GCK pins** — no solder bridge needed to switch modes
 
@@ -59,15 +59,13 @@ Two firmware builds are required — one per operating mode. Both CLK_16M and CL
 #### 48MHz Mode (recommended)
 - Uses the onboard 48MHz oscillator as the master clock
 - Generates all BBC clock outputs (8/4/2/1MHz, CRTC, 6MHz) internally
-- Provides clean, phase-locked 6MHz output for the SAA5050 teletext chip (tD ≈ 20ns ✓)
+- Can provide a clean 6MHz output for the SAA5050 teletext chip (tD ≈ 20ns ✓), using a small replacement board for IC37 or IC25 (see the 6MHz Clock section)
 - Works reliably on all machines from cold power-up
 - Build: uncomment `` `define CLK_48MHZ `` in `VideoULA.v`
 
-#### 16MHz Mode
-- Uses the BBC motherboard's 16MHz clock as the master clock (via Schmitt trigger buffer)
-- The 48MHz oscillator is optional in 16MHz mode:
-  - **Not fitted**: BBC's existing 6MHz circuit drives the SAA5050 as normal
-  - **Fitted**: CPLD generates clean phase-locked 6MHz output (connect via IC37 replacement board)
+#### 16MHz Mode (fallback)
+- Uses the BBC motherboard's 16MHz clock as the master clock (via Schmitt trigger buffer), so the CPLD's clocks stay locked to the machine's own 16MHz
+- The 48MHz oscillator is not needed; the BBC's existing 6MHz circuit drives the SAA5050 as normal
 - Build: uncomment `` `define CLK_16MHZ `` in `VideoULA.v`
 
 ### Quartus Build Instructions
@@ -135,11 +133,10 @@ The external SRAM stores the 16-entry colour palette (4 bits per entry):
 
 ## 6MHz Clock for Mode 7 (Teletext)
 
-- **48MHz mode**: CLK_6M pin provides clean phase-locked 6MHz (tD ≈ 20ns ✓). Connect to SAA5050 via IC37 replacement board.
-- **16MHz mode, oscillator fitted**: CLK_6M provides clean phase-locked 6MHz, self-correcting every 1µs. Connect via IC37 replacement board.
-- **16MHz mode, oscillator not fitted**: CLK_6M output ignored. BBC motherboard's existing 6MHz circuit used as normal.
+- **48MHz mode (recommended)**: the CPLD's CLK_6M pin provides a clean 6MHz (tD ≈ 20ns ✓). Using it needs a modification to the motherboard: a small drop-in replacement board for IC37 (74LS04) on a Model B, or IC25 (74LS86) on a Master (design files and fitting notes: [6MHz Interface Boards](https://github.com/kgl2001/VideoULA_V01/tree/main/KiCAD%20Files/6MHz%20Interface%20Boards)). The board isolates the final gate that drives the 6MHz to the teletext IC and replaces it with a jumper wire from the CPLD ULA. This gives the cleanest mode 7 picture, and a correctly aligned cursor on both Model B and Master. Alternatively, without removing IC37 / IC25, cut the output leg of the logic gate that drives the 6MHz signal to the teletext IC (pin 8 of IC37 on a Model B, pin 11 of IC25 on a Master), and connect the CPLD's CLK_6M to the teletext IC's 6MHz input (pin 19 of IC5 on a Model B, pin 19 of IC32 on a Master) with a clip lead. Cutting the leg is a permanent modification to the motherboard chip. Without a modification, the motherboard's own 6MHz circuit is used, as in 16MHz mode.
+- **16MHz mode**: CLK_6M output is not used. BBC motherboard's existing 6MHz circuit is used as normal.
 
-If the motherboard derives the 6MHz itself (CLK_6M not connected to the SAA5050), the mode 7 cursor may be one pixel too far right on some Model B machines. Feeding the CPLD's CLK_6M directly to the teletext IC avoids this.
+With the motherboard's own 6MHz circuit (16MHz mode, or 48MHz mode without the modification), the mode 7 cursor on a Master may be marginally (less than half a pixel) to the left, and the picture can show jitter on test screens such as M7CALIB.
 
 ---
 
@@ -166,7 +163,7 @@ Note that the JLCPCB Economy PCBA process only assembles components on one side 
 
 ## Known Limitations
 
-- **Mode 7 cursor on some Model B machines**: if the motherboard derives the 6MHz itself, the mode 7 cursor may be one pixel too far right. Feed the CPLD's CLK_6M directly to the teletext IC to avoid this (see the 6MHz Clock section).
+- **Mode 7 cursor and the 6MHz source**: with the motherboard's own 6MHz circuit, the mode 7 cursor on a Master may be marginally to the left, and the Mode 7 picture can show jitter on test screens such as M7CALIB. Using the CPLD's CLK_6M in 48MHz mode, with the IC37 / IC25 replacement board, avoids both (see the 6MHz Clock section).
 
 ---
 
