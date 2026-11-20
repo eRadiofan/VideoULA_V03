@@ -1,9 +1,9 @@
 # VideoULA V03 – CPLD firmware
 
-Firmware for the ATF1504AS-AU44 (V03 hardware). Current release: **V02/V03 Build 5**.
+Firmware for the ATF1504AS-AU44 (V03 hardware). Current release: **V02/V03 Build 6**.
 
 Note: firmware build numbers are independent of hardware versions and revisions. The
-V01 firmware (Build 37) and the V02/V03 firmware (Build 5) use separate numbering.
+V01 firmware (Build 37) and the V02/V03 firmware (Build 6) use separate numbering.
 
 ## Files
 
@@ -40,7 +40,25 @@ For the 16MHz build, swap the comment markers so `CLK_16MHZ` is active and
 
 The 48MHz build is recommended. The 16MHz build is a fallback for machines where
 the CPLD's clocks must stay locked to the motherboard's own 16MHz. It does not need
-the 48MHz oscillator; do not use the CPLD's `CLK_6M` output in the 16MHz build.
+the 48MHz oscillator. The CPLD `CLK_6M` output is generated from the 16MHz clock and can
+be used with the 6MHz interface boards, but it has a small fixed jitter (about 10ns), so
+the picture on mode 7 test screens such as M7CALIB is slightly noisier than in the 48MHz
+build. If `CLK_6M` is not connected, the motherboard's own 6MHz is used.
+
+## SRAM write timing
+
+Palette writes to the SRAM use three cycles: capture the address, drive the address with
+nWE high, then pull nWE low. Near the top of `src/VideoULA.v` there is an optional define
+that chooses which three cycles of the 8-cycle counter are used:
+
+    //`define SRAM_WRITE_LATE
+
+- **Default (define commented out):** cycles 1, 2 and 3.
+- **`SRAM_WRITE_LATE` defined:** cycles 2, 3 and 4. The ULA control register write also moves
+  one cycle later.
+
+Both give the SRAM a full cycle of address setup before nWE falls, and both use the same
+number of macrocells. The default is recommended.
 
 ## Programming the ATF1504AS
 
@@ -98,7 +116,18 @@ programming. See the programmer board section in the main README.
 
 ## Status
 
-V02/V03 Build 5 is tested on V03 hardware in both 16MHz and 48MHz modes.
+V02/V03 Build 6 is tested on V03 hardware in both 16MHz and 48MHz modes.
+
+### Build 6
+
+Palette writes to the external SRAM now take two cycles: the address is driven first,
+then nWE is pulled low, so the address is stable before the write. The data bus is only
+driven during the nWE cycle. The address setup problem was identified by hoglet, who also
+proposed a fix; it became apparent with the faster SRAM radiofan was using. radiofan's fix
+(a slightly different approach with the same result) is used here.
+
+In the 16MHz build, `CLK_6M` is now generated from `CLK_16M`, so the 48MHz oscillator is
+not needed in that build. The macrocell count is 52/64 (48MHz build) and 50/64 (16MHz build).
 
 ### Cursor position
 
@@ -113,6 +142,6 @@ using the motherboard 6MHz (in either build), where it may be marginally (less t
 half a pixel) to the left.
 
 For the cleanest mode 7 picture, use the CPLD `CLK_6M` output to drive the teletext IC
-(48MHz build, with the IC37 replacement board on a Model B or the IC25 replacement board on
-a Master; see [6MHz Interface Boards](https://github.com/kgl2001/VideoULA_V01/tree/main/KiCAD%20Files/6MHz%20Interface%20Boards)). With the motherboard's own 6MHz circuit, the mode 7 picture
-can show jitter on test screens such as M7CALIB.
+(preferably the 48MHz build, with the IC37 replacement board on a Model B or the IC25 replacement board on
+a Master; see [6MHz Interface Boards](https://github.com/kgl2001/VideoULA_V01/tree/main/KiCAD%20Files/6MHz%20Interface%20Boards)). With the motherboard's own 6MHz circuit, or the CPLD 6MHz in the 16MHz build, the mode 7 picture
+can show some noise on test screens such as M7CALIB.

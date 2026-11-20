@@ -2,6 +2,19 @@
 /************************************************************************
 VideoULA.v
 VideoULA V02/V03 - A replacement Video ULA for the BBC Micro
+Build 6 - November 2026 - SRAM palette write fix. The write is split into a
+                   prepare cycle (address driven, nWE high) and a write cycle
+                   (nWE low, data driven), so the address is stable before nWE
+                   falls. The address setup problem was identified by hoglet,
+                   who also proposed a fix. It became apparent with the faster
+                   SRAM radiofan was using, and radiofan's fix (a slightly
+                   different approach with the same result) is used here. The
+                   data bus is only driven during the nWE cycle (hoglet), using
+                   a registered enable.
+                   In 16MHz mode CLK_6M is now generated from CLK_16M (edge
+                   pattern based on radiofan's approach, retimed so tD is
+                   about 31ns). The 48MHz oscillator is no longer needed in
+                   the 16MHz build.
 Build 5 - November 2026 - Mode 7 cursor delay reduced to cursor_invert[0]
                    (one stage, 62.5ns). Gives a correctly aligned mode 7
                    cursor on Master and Model B with the CPLD generating the
@@ -25,9 +38,9 @@ CLOCK CONFIGURATION - uncomment ONE define only
 
 `define CLK_16MHZ
   16MHz from BBC motherboard on CLK_16M pin (GCK) via Schmitt trigger.
-  CLK_6M is generated from CLK_48M, phase locked to CLK_1M, if the optional
-  48MHz oscillator is fitted. Without the oscillator, do not connect CLK_6M
-  to the teletext IC; the machine's own 6MHz is then used.
+  CLK_6M is generated from CLK_16M (6 edges per 8 clocks, using both clock
+  edges). CLK_48M is not used. If CLK_6M is not connected to the teletext
+  IC, the machine's own 6MHz is used.
 ------------------------------------------------------------------------
 
 Clock architecture (unified clk_counter in both modes):
@@ -42,9 +55,11 @@ Clock architecture (unified clk_counter in both modes):
   CLK_1M   = clk_counter[3]  (direct bit tap)
   CLK_CRTC = clk_counter[2] or clk_counter[3] per r0_crtc_2mhz
 
-  CLK_6M (48MHz mode only):
-    State decode from {clk_counter, clk_prescaler}
-    tD = 20.83ns before CLK_1M falls ✓ (SAA5050 requires 6-60ns)
+  CLK_6M:
+    48MHz mode: state decode from {clk_counter, clk_prescaler}
+      tD = 20.83ns before CLK_1M falls ✓ (SAA5050 requires 6-60ns)
+    16MHz mode: rising-edge toggle XOR falling-edge toggle on CLK_16M,
+      tD about 31ns ✓ (edge spacing has fixed jitter of about 10ns)
 
   pixel_reg sampled on posedge at end of DRAM access cycle x111:
     DRAM nCAS asserted at x110 (via IC45 74S139, ~12ns delay)
@@ -76,9 +91,30 @@ Target devices:
   `endif
 `endif
 
+// ------------------------------------------------------------------------
+// SRAM PALETTE WRITE TIMING - select at build time
+// ------------------------------------------------------------------------
+// A palette write takes three cycles of the 8-cycle clk_counter: capture the
+// address from D[7:4], prepare (address driven, nWE high), then write (nWE low,
+// data driven). The ULA control register write also happens in the prepare cycle.
+//
+// Default (define commented out) - EARLY timing:
+//   capture = cycle 1, prepare = cycle 2, write = cycle 3 (clk_counter 001/010/011).
+//   Only one counter bit changes between the prepare and write cycles, so the
+//   address mux select cannot glitch between them.
+//
+// `define SRAM_WRITE_LATE - LATE timing:
+//   capture = cycle 2, prepare = cycle 3, write = cycle 4 (clk_counter 010/011/100).
+//   All three counter bits change between prepare and write, which can produce a
+//   brief glitch on the address mux select and may need slightly more logic.
+//   The ULA control register write also happens one cycle later.
+//
+// Both timings give the SRAM one full cycle of address setup before nWE falls.
+//`define SRAM_WRITE_LATE
+
 module VideoULA (
     input  wire        CLK_48M,     // 48MHz oscillator (GCK pin in 48MHz mode;
-                                   // optional CLK_6M source in 16MHz mode)
+                                   // unused in 16MHz mode)
 `ifdef CLK_16MHZ
     input  wire        CLK_16M,     // 16MHz from BBC via Schmitt trigger (GCK pin)
 `endif
@@ -159,34 +195,34 @@ module VideoULA (
 
 `else // CLK_16MHZ
     // 16MHz mode: mhz16_clken always active
-    // CLK_16M drives clk_counter directly
-    // CLK_48M used only for CLK_6M generation
+    // CLK_16M drives clk_counter directly. CLK_48M is not used.
     assign mhz16_clken = 1'b1;
 
     always @(posedge CLK_16M)
         clk_counter <= clk_counter + 1'b1;
 
-    // CLK_6M generation: free-running counter on CLK_48M, phase locked
-    // to CLK_1M by resetting cnt_6m to 5 on CLK_1M rising edge.
-    // CLK_1M rising edge detected synchronously via CLK_48M.
-    // CLK_6M rises at tick 23 of each 1MHz cycle → tD = 20.8ns ✓
-    // SAA5050 requires tD = 6-60ns. ✓
-    reg [2:0] cnt_6m     = 3'b101;
-    reg       clk_1m_prev = 1'b0;
-    reg       clk_6m_reg  = 1'b0;
+    // CLK_6M from CLK_16M: 6 edges per 8 clocks (3,3,2,3,3,2 half-cycles).
+    // cnt_pos and clk_counter both start at 0 and count together, so the
+    // phase relative to CLK_1M is fixed. tD (6MHz rise to 1MHz fall) is
+    // about 31ns; SAA5050 requires 6-60ns.
+    reg [2:0] cnt_pos = 3'd0;
+    reg       tgl_pos = 1'b1;
+    reg       tgl_neg = 1'b0;
 
-    always @(posedge CLK_48M) begin
-        clk_1m_prev <= CLK_1M;
-        // Detect CLK_1M rising edge and reset cnt_6m to phase-lock CLK_6M
-        if (CLK_1M & ~clk_1m_prev)
-            cnt_6m <= 3'd5;
-        else
-            cnt_6m <= (cnt_6m == 3'd7) ? 3'd0 : cnt_6m + 1'b1;
-        // CLK_6M high when cnt_6m >= 4
-        clk_6m_reg <= cnt_6m[2];
+    // Rising-edge domain
+    always @(posedge CLK_16M) begin
+        cnt_pos <= cnt_pos + 3'd1;
+        if (cnt_pos == 3'd0 || cnt_pos == 3'd1 || cnt_pos == 3'd4 || cnt_pos == 3'd5)
+            tgl_pos <= ~tgl_pos;
     end
 
-    assign CLK_6M = clk_6m_reg;
+    // Falling-edge domain (samples cnt_pos so phase alignment is guaranteed)
+    always @(negedge CLK_16M) begin
+        if (cnt_pos == 3'd3 || cnt_pos == 3'd7)
+            tgl_neg <= ~tgl_neg;
+    end
+
+    assign CLK_6M = tgl_pos ^ tgl_neg;
 
 `endif
 
@@ -199,7 +235,16 @@ module VideoULA (
     // =========================================================================
     // CLOCK ENABLES
     // =========================================================================
-    wire r0_clken   = (~nCS) & (clk_counter[2:0] == 3'b010);
+    // SRAM palette write: address loaded in cycle 1, address driven in cycle 2
+    // (prepare), nWE low and data driven in cycle 3.
+`ifdef SRAM_WRITE_LATE
+    localparam [2:0] WR_CAPTURE = 3'd2, WR_PREP = 3'd3, WR_DO = 3'd4;
+`else
+    localparam [2:0] WR_CAPTURE = 3'd1, WR_PREP = 3'd2, WR_DO = 3'd3;
+`endif
+    wire r0_data_ready    = (~nCS) & (clk_counter[2:0] == WR_CAPTURE);
+    wire r0_prepare_write = (~nCS) & (clk_counter[2:0] == WR_PREP);
+    wire r0_do_write      = (~nCS) & (clk_counter[2:0] == WR_DO);
 
     wire crtc_clken = (r0_crtc_2mhz  & (clk_counter[2:0] == 3'b111)) |
                       (~r0_crtc_2mhz & (clk_counter[3:0] == 4'b1111));
@@ -219,7 +264,7 @@ module VideoULA (
     always @(posedge CLK_16M) begin
 `endif
         if (mhz16_clken) begin
-            if (r0_clken & ~A) begin
+            if (r0_prepare_write & ~A) begin
                 r0_cursor0    <= D[7];
                 r0_cursor1    <= D[6];
                 r0_cursor2    <= D[5];
@@ -233,15 +278,15 @@ module VideoULA (
 
     // =========================================================================
     // SRAM PALETTE INTERFACE
-    // sram_write is combinational (r0_clken & A). SRAM_nWE and the SRAM_ADDR
-    // mux select both derive from it, so address and nWE change at nearly
-    // the same time; address setup to nWE is NOT guaranteed (SRAM tSA=0ns).
-    // r0_preload (cycle 001) loads sram_addr_reg from D[7:4] at the 001->010
-    // clock edge, which can race with sram_write asserting at that same edge.
-    // This is not a one-cycle setup margin.
-    // =========================================================================
-    wire r0_preload = (~nCS) & (clk_counter[2:0] == 3'b001);
-    wire sram_write = r0_clken & A;
+    // Palette write is split over two cycles. In the prepare cycle the
+    // address (from sram_addr_reg) is driven while nWE is still high. nWE then
+    // goes low in the following cycle, so the address is stable before nWE
+    // (SRAM tSA = 0ns). SRAM_DATA is only driven during the nWE cycle, so
+    // the CPLD does not fight the SRAM output (SRAM /OE is tied low).
+    // sram_addr_reg is loaded from D[7:4] in the cycle before the prepare cycle.
+    wire sram_pre_write = r0_prepare_write & A;
+    wire sram_do_write  = r0_do_write & A;
+    wire sram_busy      = sram_pre_write | sram_do_write;
 
     reg [3:0] sram_addr_reg = 4'b0000;
 `ifdef CLK_48MHZ
@@ -249,14 +294,23 @@ module VideoULA (
 `else
     always @(posedge CLK_16M)
 `endif
-        if (mhz16_clken & r0_preload)
+        if (mhz16_clken & r0_data_ready)
             sram_addr_reg <= D[7:4];
 
     wire [3:0] log_col = {pixel_reg[7], pixel_reg[5], pixel_reg[3], pixel_reg[1]};
 
-    assign SRAM_ADDR = sram_write ? sram_addr_reg : log_col;
-    assign SRAM_nWE  = ~sram_write;
-    assign SRAM_DATA = sram_write ? D[3:0] : 4'bZZZZ;
+    assign SRAM_ADDR = sram_busy ? sram_addr_reg : log_col;
+    assign SRAM_nWE  = ~sram_do_write;
+    // Data-bus enable is registered: set in the prepare cycle, so it is high
+    // for the nWE cycle only (a combinational enable fitted badly in 16MHz mode).
+    reg sram_oe_reg = 1'b0;
+`ifdef CLK_48MHZ
+    always @(posedge CLK_48M)
+`else
+    always @(posedge CLK_16M)
+`endif
+        if (mhz16_clken) sram_oe_reg <= sram_pre_write;
+    assign SRAM_DATA = sram_oe_reg ? D[3:0] : 4'bZZZZ;
 
     wire [3:0] phy_col = SRAM_DATA;
 
@@ -330,7 +384,7 @@ module VideoULA (
     always @(posedge CLK_16M) begin
 `endif
         if (mhz16_clken) begin
-            if (~sram_write) begin
+            if (~sram_busy) begin
                 // Modes 0-6: cursor_invert0 has no delay, so the cursor lines up
                 // with the palette lookup latency. Do not use cursor_invert0 in
                 // the teletext mux below as well: routing both fails to fit.

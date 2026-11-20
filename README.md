@@ -34,7 +34,7 @@ All three versions share the same 28-pin DIP footprint as the original ULA and a
 - **5V CPLD** — ATF1504AS operates at 5V throughout, no LDO required
 - **Higher output voltage** — 5V logic outputs directly compatible with Master 128 custom ICs requiring higher logic 1 voltage; no output clock buffering needed
 - **Still in production** — ATF1504AS is actively manufactured by Microchip, unlike the obsolete XC9572XL
-- **64 macrocells** — slightly fewer than the XC9572XL's 72, but sufficient for the design (51/64 used in both the 48MHz and 16MHz builds)
+- **64 macrocells** — slightly fewer than the XC9572XL's 72, but sufficient for the design (52/64 used in the 48MHz build, 50/64 in the 16MHz build)
 - **Quartus 13.0 SP1** — uses Altera/Intel Quartus instead of Xilinx ISE
 - **Separate CLK_16M and CLK_48M GCK pins** — no solder bridge needed to switch modes
 
@@ -65,7 +65,7 @@ Two firmware builds are required — one per operating mode. Both CLK_16M and CL
 
 #### 16MHz Mode (fallback)
 - Uses the BBC motherboard's 16MHz clock as the master clock (via Schmitt trigger buffer), so the CPLD's clocks stay locked to the machine's own 16MHz
-- The 48MHz oscillator is not needed; the BBC's existing 6MHz circuit drives the SAA5050 as normal
+- The 48MHz oscillator is not needed. The CPLD can generate the 6MHz from the 16MHz clock (slightly more jitter than the 48MHz build), or the BBC's existing 6MHz circuit can drive the SAA5050 as normal
 - Build: uncomment `` `define CLK_16MHZ `` in `VideoULA.v`
 
 ### Quartus Build Instructions
@@ -134,9 +134,9 @@ The external SRAM stores the 16-entry colour palette (4 bits per entry):
 ## 6MHz Clock for Mode 7 (Teletext)
 
 - **48MHz mode (recommended)**: the CPLD's CLK_6M pin provides a clean 6MHz (tD ≈ 20ns ✓). Using it needs a modification to the motherboard: a small drop-in replacement board for IC37 (74LS04) on a Model B, or IC25 (74LS86) on a Master (design files and fitting notes: [6MHz Interface Boards](https://github.com/kgl2001/VideoULA_V01/tree/main/KiCAD%20Files/6MHz%20Interface%20Boards)). The board isolates the final gate that drives the 6MHz to the teletext IC and replaces it with a jumper wire from the CPLD ULA. This gives the cleanest mode 7 picture, and a correctly aligned cursor on both Model B and Master. Alternatively, without removing IC37 / IC25, cut the output leg of the logic gate that drives the 6MHz signal to the teletext IC (pin 8 of IC37 on a Model B, pin 11 of IC25 on a Master), and connect the CPLD's CLK_6M to the teletext IC's 6MHz input (pin 19 of IC5 on a Model B, pin 19 of IC32 on a Master) with a clip lead. Cutting the leg is a permanent modification to the motherboard chip. Without a modification, the motherboard's own 6MHz circuit is used, as in 16MHz mode.
-- **16MHz mode**: CLK_6M output is not used. BBC motherboard's existing 6MHz circuit is used as normal.
+- **16MHz mode**: the CLK_6M output is generated from the 16MHz clock and can be used in the same way. It has a small fixed jitter (about 10ns), so M7CALIB shows slightly more noise than in the 48MHz build. If CLK_6M is not connected, the BBC motherboard's existing 6MHz circuit is used as normal.
 
-With the motherboard's own 6MHz circuit (16MHz mode, or 48MHz mode without the modification), the mode 7 cursor on a Master may be marginally (less than half a pixel) to the left, and the picture can show jitter on test screens such as M7CALIB.
+With the motherboard's own 6MHz circuit (48MHz or 16MHz mode without the modification), the mode 7 cursor on a Master may be marginally (less than half a pixel) to the left, and the picture can show jitter on test screens such as M7CALIB.
 
 ---
 
@@ -163,7 +163,7 @@ Note that the JLCPCB Economy PCBA process only assembles components on one side 
 
 ## Known Limitations
 
-- **Mode 7 cursor and the 6MHz source**: with the motherboard's own 6MHz circuit, the mode 7 cursor on a Master may be marginally to the left, and the Mode 7 picture can show jitter on test screens such as M7CALIB. Using the CPLD's CLK_6M in 48MHz mode, with the IC37 / IC25 replacement board, avoids both (see the 6MHz Clock section).
+- **Mode 7 cursor and the 6MHz source**: with the motherboard's own 6MHz circuit, the mode 7 cursor on a Master may be marginally to the left, and the Mode 7 picture can show jitter on test screens such as M7CALIB. Using the CPLD's CLK_6M, with the IC37 / IC25 replacement board, avoids both (see the 6MHz Clock section).
 
 ---
 
@@ -176,7 +176,8 @@ Designed for BBC Micro Model B and Master 128. The 5V CPLD outputs are directly 
 ## Credits
 
 - **Ken Lowe** — PCB design, Verilog development and testing
-- **hoglet (Stardot forums)** — Clock architecture analysis, DRAM timing analysis, community testing
+- **hoglet (Stardot forums)** — Clock architecture analysis, DRAM timing analysis, SRAM write address setup analysis and proposed fix, community testing
+- **radiofan (Stardot forums)** — SRAM write fix, 16MHz-derived 6MHz clock approach, testing on Model B and Master
 - **Stardot community** — Testing, feedback and suggestions
 
 ---
