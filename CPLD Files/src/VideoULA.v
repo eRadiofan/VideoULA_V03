@@ -137,7 +137,8 @@ module VideoULA (
     output wire        B,
     output wire [3:0]  SRAM_ADDR,
     inout  wire [3:0]  SRAM_DATA,
-    output wire        SRAM_nWE
+    output wire        SRAM_nWE,
+    input  wire        CURS_POS
 );
 
     // =========================================================================
@@ -403,8 +404,9 @@ module VideoULA (
     // using the motherboard 6MHz. On a Master using the motherboard 6MHz the
     // cursor may be marginally (less than half a pixel) to the left. Feeding
     // the CPLD CLK_6M directly to the teletext IC gives the cleanest picture.
-    assign R = r0_teletext ? (R_IN ^ cursor_invert[0]) : RR;
-    assign G = r0_teletext ? (G_IN ^ cursor_invert[0]) : GG;
-    assign B = r0_teletext ? (B_IN ^ cursor_invert[0]) : BB;
+	 wire inv = (CURS_POS==0) ? cursor_invert[0] : cursor_invert[1];
+    assign R = r0_teletext ? (R_IN ^ inv) : RR;
+    assign G = r0_teletext ? (G_IN ^ inv) : GG;
+    assign B = r0_teletext ? (B_IN ^ inv) : BB;
 
 endmodule
